@@ -98,28 +98,32 @@ async function saveAuthToDB() {
 
 
 // 🚀 START WHATSAPP
+// 🚀 START WHATSAPP
 async function startWhatsApp() {
   const baileys = await import("@whiskeysockets/baileys");
+  const { 
+    default: makeWASocket, 
+    useMultiFileAuthState, 
+    DisconnectReason,
+    fetchLatestBaileysVersion // 👈 Import this
+  } = baileys;
 
-  const makeWASocket = baileys.default;
-  const { useMultiFileAuthState, DisconnectReason } = baileys;
-
-  // 🔥 Load session from DB first
   await loadAuthFromDB();
 
   const { state, saveCreds } = await useMultiFileAuthState(AUTH_FOLDER);
+  
+  // 👈 Fetch the latest WhatsApp Web version dynamically
+  const { version } = await fetchLatestBaileysVersion(); 
 
   sock = makeWASocket({
     auth: state,
-    browser: ["Ubuntu", "Chrome", "22.04"],
+    version: version, // 👈 Pass the fetched version
+    browser: ["Windows", "Chrome", "122.0.0.0"], // 👈 Use a realistic browser string
     syncFullHistory: false
   });
 
-  // Save creds + sync to DB
-  sock.ev.on("creds.update", async () => {
-    await saveCreds();
-    await saveAuthToDB();
-  });
+  // ... (keep the rest of your event listeners the same)
+
 
   sock.ev.on("connection.update", (update) => {
     const { connection, qr, lastDisconnect } = update;
