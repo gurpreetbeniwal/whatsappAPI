@@ -99,32 +99,37 @@ async function saveAuthToDB() {
 
 // 🚀 START WHATSAPP
 // 🚀 START WHATSAPP
+// 🚀 START WHATSAPP
 async function startWhatsApp() {
   const baileys = await import("@whiskeysockets/baileys");
   const { 
     default: makeWASocket, 
     useMultiFileAuthState, 
     DisconnectReason,
-    fetchLatestBaileysVersion // 👈 Import this
+    fetchLatestBaileysVersion
   } = baileys;
 
+  // 1. Load session from MySQL first
   await loadAuthFromDB();
 
   const { state, saveCreds } = await useMultiFileAuthState(AUTH_FOLDER);
-  
-  // 👈 Fetch the latest WhatsApp Web version dynamically
   const { version } = await fetchLatestBaileysVersion(); 
 
+  // 2. Initialize WhatsApp Socket
   sock = makeWASocket({
     auth: state,
-    version: version, // 👈 Pass the fetched version
-    browser: ["Windows", "Chrome", "122.0.0.0"], // 👈 Use a realistic browser string
+    version: version,
+    browser: ["Windows", "Chrome", "122.0.0.0"],
     syncFullHistory: false
   });
 
-  // ... (keep the rest of your event listeners the same)
+  // 🚨 THE CRUCIAL FIX: Save credentials to local files AND MySQL
+  sock.ev.on("creds.update", async () => {
+    await saveCreds();
+    await saveAuthToDB();
+  });
 
-
+  // 3. Handle Connection Events
   sock.ev.on("connection.update", (update) => {
     const { connection, qr, lastDisconnect } = update;
 
@@ -140,12 +145,18 @@ async function startWhatsApp() {
     if (connection === "close") {
       const reason = lastDisconnect?.error?.output?.statusCode;
 
-      console.log("❌ Disconnected:", reason);
+      console.log("❌ Disconnected. Reason Code:", reason);
 
       if (reason === DisconnectReason.loggedOut) {
-        console.log("⚠️ Logged out. Clear DB + rescan.");
-      } else {
-        console.log("⛔ Not reconnecting automatically (safe mode)");
+        console.log("⚠️ Logged out from WhatsApp. Clear DB and rescan.");
+      } 
+      else if (reason === DisconnectReason.restartRequired || reason === 515) {
+        console.log("🔄 WhatsApp requested a restart (515). Reconnecting now...");
+        startWhatsApp(); 
+      } 
+      else {
+        console.log("🔌 Connection dropped. Attempting to auto-reconnect...");
+        startWhatsApp(); 
       }
     }
   });
@@ -185,8 +196,82 @@ app.post("/send-message", async (req, res) => {
 
 
 // 🩺 HEALTH CHECK
+// 🌐 WEB FRONTEND
 app.get("/", (req, res) => {
-  res.send("WhatsApp API Running 🚀");
+  res.send(`
+    <!DOCTYPE html>
+    <html lang="en">
+    <head>
+      <meta charset="UTF-8">
+      <meta name="viewport" content="width=device-width, initial-scale=1.0">
+      <title>WhatsApp API Sender</title>
+      <style>
+        body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background-color: #e5ddd5; display: flex; justify-content: center; align-items: center; height: 100vh; margin: 0; }
+        .container { background: white; padding: 30px; border-radius: 12px; box-shadow: 0 8px 24px rgba(0,0,0,0.1); width: 100%; max-width: 400px; }
+        h2 { text-align: center; color: #075E54; margin-top: 0; margin-bottom: 25px; }
+        input, textarea, button { width: 100%; margin-bottom: 15px; padding: 12px; border: 1px solid #ccc; border-radius: 8px; box-sizing: border-box; font-size: 15px; }
+        input:focus, textarea:focus { outline: none; border-color: #25D366; box-shadow: 0 0 5px rgba(37, 211, 102, 0.3); }
+        button { background-color: #25D366; color: white; border: none; font-weight: bold; cursor: pointer; transition: background-color 0.2s; }
+        button:hover { background-color: #128C7E; }
+        #status { text-align: center; font-weight: bold; margin-top: 10px; min-height: 20px; }
+        .success { color: #075E54; }
+        .error { color: #d32f2f; }
+      </style>
+    </head>
+    <body>
+      <div class="container">
+        <h2>💬 Send Message</h2>
+        <input type="password" id="apiPwd" placeholder="Enter API Password" required>
+        <input type="text" id="phone" placeholder="Phone with Country Code (e.g., 919876543210)" required>
+        <textarea id="message" rows="4" placeholder="Type your message here..." required></textarea>
+        <button onclick="sendMessage()">Send via WhatsApp 🚀</button>
+        <p id="status"></p>
+      </div>
+
+      <script>
+        async function sendMessage() {
+          const statusEl = document.getElementById('status');
+          const btn = document.querySelector('button');
+          
+          statusEl.textContent = 'Sending...';
+          statusEl.className = '';
+          btn.disabled = true;
+
+          const payload = {
+            password: document.getElementById('apiPwd').value,
+            phone: document.getElementById('phone').value,
+            message: document.getElementById('message').value
+          };
+
+          try {
+            // Because the frontend is served from the same app, we can just call '/send-message' directly
+            const response = await fetch('/send-message', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify(payload)
+            });
+            
+            const data = await response.json();
+            
+            if (response.ok) {
+              statusEl.textContent = '✅ ' + data.message;
+              statusEl.className = 'success';
+              document.getElementById('message').value = ''; // clear the message box after success
+            } else {
+              statusEl.textContent = '❌ Error: ' + (data.error || 'Failed to send');
+              statusEl.className = 'error';
+            }
+          } catch (err) {
+            statusEl.textContent = '❌ Network Error - Is the server running?';
+            statusEl.className = 'error';
+          } finally {
+            btn.disabled = false;
+          }
+        }
+      </script>
+    </body>
+    </html>
+  `);
 });
 
 
